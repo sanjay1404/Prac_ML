@@ -1,0 +1,97 @@
+---
+title: "Practical Machine Learning Assignment 4"
+author: "Sanjay Pratap"
+date: "March 11, 2016"
+output: html_document
+---
+
+
+
+```{r}
+library(caret)
+set.seed(1234)
+
+options(warn=-1)
+library(randomForest)
+library(Hmisc)
+
+library(foreach)
+library(doParallel)
+
+```
+Read the data, inserting NAs from the string "NA" and empty fields; trim whitespace in other fields so R treats them correctly as numeric.
+```{r}
+setwd("D:/coursera")  
+Data <- read.csv("pml-training.csv", na.strings=c("NA",""), strip.white=T)
+dim(Data)
+#summary(Data)
+#describe(Data)
+#sapply(Data, class)
+#str(Data)
+
+```
+The data frame returned by reading the file has nearly 20,000 rows and 160 columns so ruthlessly discard any column with an NA, as well as metadata and time-related ones
+```{r}
+setwd("D:/coursera")  
+isNA <- apply(Data, 2, function(x) { sum(is.na(x)) })
+validData <- subset(Data[, which(isNA == 0)], 
+                    select=-c(X, user_name, new_window, num_window, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp))
+dim(validData)
+
+```
+so we've got rid of 2/3s of the columns. Let's partition the data into training and test sets. (The classe column is the outcome)
+```{r}
+inTrain <- createDataPartition(validData$classe, p=0.7, list=F)
+training <- validData[inTrain,]
+testing <- validData[-inTrain,]
+
+```
+Training a Random Forest Model
+Now train a Random Forest model on the training set. (Using this particular combination of trControl parameters is important, as by default bootstrapping is used, which is very time-intensive.)
+```{r}
+ctrl <- trainControl(allowParallel=T, method="cv", number=4)
+model <- train(classe ~ ., data=training, model="rf", trControl=ctrl)
+pred <- predict(model, newdata=testing)
+
+
+```
+Check the predictions against the held-back test-set.
+```{r}
+sum(pred == testing$classe) / length(pred)
+
+```
+So our trained model is 99.4% accurate against our test-set and this is confirmed by the confusion matrix. Let's use this super-accurate model to predict the unknown labels.
+
+
+```{r}
+setwd("D:/coursera") 
+rawTestData <- read.csv("pml-testing.csv", na.strings=c("NA",""), strip.white=T)
+validTestData <- subset(rawTestData[, which(isNA == 0)], 
+                        select=-c(X, user_name, new_window, num_window, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp))
+predict(model, newdata=validTestData)
+
+```
+Training a smaller Random Forest Model
+Let's train and test a simpler model using only the top-ten most-important predictors.
+
+```{r}
+smallValidData <- subset(validData,select=c(roll_belt, pitch_forearm, yaw_belt, magnet_dumbbell_y, pitch_belt, magnet_dumbbell_z, roll_forearm, accel_dumbbell_y, roll_dumbbell, magnet_dumbbell_x,classe))
+smallModel <- train(classe ~ ., data=smallValidData[inTrain,], model="rf", trControl=ctrl)
+
+```
+This is 5x faster and gets the same (correct) answer. Its accuracy on the test set is 98.5%.
+```{r}
+predict(smallModel, newdata=validTestData)
+smallPred <- predict(smallModel, newdata=testing)
+sum(smallPred == testing$classe) / length(smallPred)
+confusionMatrix(testing$classe, smallPred)$table
+```
+Training a Support Vector Machine
+let's train an SVM on the top-ten predictors.
+```{r}
+svm <- train(classe ~ ., data=smallValidData[inTrain,], model="svm", trControl=ctrl)
+svmPred <- predict(svm, newdata=testing)
+sum(svmPred == testing$classe) / length(svmPred)
+confusionMatrix(testing$classe, svmPred)$table
+```
+It also scores 98.4% accuracy and its confusion matrix is only slightly less accurate than the simpler Random Forest model's.
